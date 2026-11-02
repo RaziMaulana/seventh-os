@@ -1,35 +1,48 @@
 # SeventhOS — Mini Operating System
 
-A minimal 32-bit operating system built from scratch using C and x86 Assembly.
+SeventhOS is an educational 32-bit x86 operating system developed using C and Assembly. This project aims to introduce fundamental operating system concepts, starting from the boot process to a basic command-line shell.
 
-This project is developed incrementally through four milestones, starting from a bootable kernel and progressing toward an interactive command-line shell.
+The project uses GRUB Multiboot as its bootloader, NASM for assembly, GCC for C compilation, GNU LD for linking, and QEMU for emulation.
 
-## 1. Install tools (Ubuntu / WSL2)
+## 1. Requirements
 
-Update Ubuntu package repositories:
+### Development Environment
+
+- Ubuntu / WSL2
+- Visual Studio Code
+- GCC and GNU Binutils
+- NASM
+- GRUB
+- QEMU
+- Make
+
+### Install Dependencies
 
 ```bash
 sudo apt update
+
+sudo apt install -y \
+  build-essential \
+  gcc-multilib \
+  nasm \
+  qemu-system-x86 \
+  grub-common \
+  grub-pc-bin \
+  xorriso \
+  make \
+  binutils
 ```
 
-Install the required development tools:
-
-```bash
-sudo apt install -y build-essential gcc-multilib nasm \
-  qemu-system-x86 grub-common grub-pc-bin xorriso \
-  make binutils git
-```
-
-Verify the installed tools:
+Verify the installation:
 
 ```bash
 gcc --version
 nasm --version
+make --version
 qemu-system-i386 --version
-grub-mkrescue --version
 ```
 
-## 2. Project structure
+## 2. Project Structure
 
 ```text
 SeventhOS/
@@ -57,114 +70,605 @@ SeventhOS/
 └── Makefile
 ```
 
-## 3. Development milestones
+## 3. Development Milestones
 
-### Milestone 1: Bootloader and Kernel Initialization
+# Milestone 1 — Bootloader and Kernel Initialization
 
-**Objective:** Boot a minimal 32-bit freestanding C kernel using GRUB Multiboot and execute it in QEMU.
+### Objective
 
-Implementation:
+Create a minimal 32-bit operating system that can boot through GRUB and execute a freestanding C kernel.
 
-- Create a Multiboot-compatible bootloader using NASM.
-- Prepare the kernel entry point and stack.
-- Implement a minimal `kernel_main()` function in C.
-- Configure the kernel memory layout using `linker.ld`.
-- Configure GRUB to load the kernel.
+### Concepts
 
-Expected result:
+- BIOS and boot process fundamentals
+- GRUB Multiboot
+- x86 Assembly
+- Freestanding C
+- Linker scripts
+- Kernel entry point
 
-- GRUB successfully loads the kernel.
-- The kernel executes in 32-bit protected mode.
-- The kernel can display text through VGA text memory at `0xB8000`.
+### Step 1: Create the Bootloader
 
-### Milestone 2: VGA Text Mode and Terminal Management
+Create `boot/boot.asm`.
 
-**Objective:** Implement a reusable terminal subsystem for text output and screen management.
+This file contains the Multiboot header and the initial assembly instructions that prepare the stack before transferring execution to the C kernel.
 
-Implementation:
+```asm
+section .multiboot
+align 4
 
-- Create `kernel/terminal.c` and `kernel/terminal.h`.
-- Implement VGA text buffer access.
-- Support an 80 × 25 terminal display.
-- Implement foreground and background colors.
-- Implement character and string output.
-- Handle newline and carriage return.
-- Implement Backspace.
-- Implement terminal scrolling and screen clearing.
+MB_MAGIC    equ 0x1BADB002
+MB_FLAGS    equ 0x00000003
+MB_CHECKSUM equ -(MB_MAGIC + MB_FLAGS)
 
-Available terminal functions:
+dd MB_MAGIC
+dd MB_FLAGS
+dd MB_CHECKSUM
 
-| Function | Description |
-|---|---|
-| `terminal_initialize()` | Initialize the terminal. |
-| `terminal_clear()` | Clear the terminal screen. |
-| `terminal_set_color()` | Set foreground and background colors. |
-| `terminal_putchar()` | Display a single character. |
-| `terminal_write()` | Display a string. |
+section .bss
+align 16
 
-Expected result:
+stack_bottom:
+    resb 16384
+stack_top:
 
-- The kernel can display formatted text.
-- Terminal operations are managed through reusable functions.
-- Screen clearing, character output, and scrolling work correctly.
+section .text
+global _start
+extern kernel_main
 
-### Milestone 3: Interrupt Management and Keyboard Driver
+_start:
+    mov esp, stack_top
 
-**Objective:** Implement hardware interrupt handling and keyboard input processing.
+    call kernel_main
 
-Implementation:
+.hang:
+    cli
+    hlt
+    jmp .hang
+```
 
-- Create an Interrupt Descriptor Table (IDT) with 256 entries.
-- Configure the keyboard interrupt at vector `0x21`.
-- Implement Interrupt Service Routines (ISR) using NASM.
-- Remap the Programmable Interrupt Controller (PIC).
-- Configure IRQ1 for keyboard input.
-- Read keyboard scancodes from I/O port `0x60`.
-- Translate scancodes into ASCII characters.
-- Implement a keyboard input buffer.
-- Handle Shift, Backspace, and Enter.
-- Integrate keyboard input with the terminal.
+### Step 2: Create the Kernel
 
-Expected result:
+Create `kernel/kernel.c`.
 
-- Keyboard input is received through hardware interrupts.
-- Pressed keys are translated into characters.
-- Characters can be displayed in the terminal.
-- Backspace and Enter work correctly.
+The kernel is the core component of the operating system. For the first milestone, it only needs to initialize and display a simple message.
 
-### Milestone 4: Shell and Command Interpreter
+```c
+void kernel_main(void)
+{
+    volatile char *video_memory = (volatile char *)0xB8000;
 
-**Objective:** Transform the terminal into an interactive command-line interface.
+    const char *message = "Welcome to SeventhOS!";
 
-Implementation:
+    for (int i = 0; message[i] != '\0'; i++)
+    {
+        video_memory[i * 2] = message[i];
+        video_memory[i * 2 + 1] = 0x0F;
+    }
 
-- Create `shell/shell.c` and `shell/shell.h`.
-- Implement an input buffer with a maximum capacity of 128 characters.
-- Handle character insertion and deletion.
-- Process input when Enter is pressed.
-- Implement basic command parsing.
-- Execute built-in commands.
-- Display a new prompt after each command.
+    while (1)
+    {
+        __asm__ volatile("hlt");
+    }
+}
+```
 
-Available commands:
+The address `0xB8000` refers to VGA text-mode memory. Each character occupies two bytes: one for the character and another for its display attributes.
+
+### Step 3: Create the Linker Script
+
+Create `linker.ld`.
+
+```ld
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 1M;
+
+    .text ALIGN(4K) :
+    {
+        *(.multiboot)
+        *(.text)
+    }
+
+    .rodata ALIGN(4K) :
+    {
+        *(.rodata)
+    }
+
+    .data ALIGN(4K) :
+    {
+        *(.data)
+    }
+
+    .bss ALIGN(4K) :
+    {
+        *(COMMON)
+        *(.bss)
+    }
+}
+```
+
+The linker script defines the memory layout of the kernel and specifies `_start` as its entry point.
+
+### Step 4: Configure GRUB
+
+Create `iso/boot/grub/grub.cfg`.
+
+```cfg
+set timeout=0
+set default=0
+
+menuentry "SeventhOS" {
+    multiboot /boot/kernel.elf
+    boot
+}
+```
+
+### Expected Result
+
+After building and running the ISO, QEMU should display:
+
+```text
+Welcome to SeventhOS!
+```
+
+---
+
+# Milestone 2 — VGA Text Mode and Terminal Management
+
+### Objective
+
+Create a terminal management system that allows the kernel to display text, manage colors, clear the screen, and handle basic character operations.
+
+### Concepts
+
+- VGA text mode
+- Video memory
+- Character attributes
+- Terminal cursor
+- Screen scrolling
+- Header and source files in C
+
+### Step 1: Create the Terminal Header
+
+Create `kernel/terminal.h`.
+
+```c
+#ifndef SEVENTHOS_TERMINAL_H
+#define SEVENTHOS_TERMINAL_H
+
+#include <stdint.h>
+
+enum terminal_color
+{
+    COLOR_BLACK = 0,
+    COLOR_BLUE = 1,
+    COLOR_GREEN = 2,
+    COLOR_CYAN = 3,
+    COLOR_RED = 4,
+    COLOR_MAGENTA = 5,
+    COLOR_BROWN = 6,
+    COLOR_LIGHT_GREY = 7,
+    COLOR_DARK_GREY = 8,
+    COLOR_LIGHT_BLUE = 9,
+    COLOR_LIGHT_GREEN = 10,
+    COLOR_LIGHT_CYAN = 11,
+    COLOR_LIGHT_RED = 12,
+    COLOR_LIGHT_MAGENTA = 13,
+    COLOR_YELLOW = 14,
+    COLOR_WHITE = 15
+};
+
+void terminal_initialize(void);
+void terminal_clear(void);
+void terminal_set_color(uint8_t foreground, uint8_t background);
+void terminal_putchar(char character);
+void terminal_write(const char *text);
+
+#endif
+```
+
+### Step 2: Implement Terminal Functions
+
+Create `kernel/terminal.c`.
+
+The terminal uses VGA memory at `0xB8000`, with an 80-column by 25-row display.
+
+Implement the following functions:
+
+- `terminal_initialize()` — initialize terminal state.
+- `terminal_clear()` — clear the display.
+- `terminal_set_color()` — configure foreground and background colors.
+- `terminal_putchar()` — display one character.
+- `terminal_write()` — display a string.
+- Handle newline, backspace, and scrolling.
+
+A VGA character entry can be constructed using:
+
+```c
+static uint8_t terminal_color =
+    COLOR_LIGHT_GREY | (COLOR_BLACK << 4);
+
+static uint16_t make_vga_entry(char character, uint8_t color)
+{
+    return (uint16_t)character | ((uint16_t)color << 8);
+}
+```
+
+Use a volatile pointer to access video memory:
+
+```c
+static volatile uint16_t *const VGA_MEMORY =
+    (volatile uint16_t *)0xB8000;
+```
+
+The terminal should maintain its own cursor position and update it whenever a character is printed or a newline is encountered.
+
+### Step 3: Integrate the Terminal into the Kernel
+
+Update `kernel/kernel.c`.
+
+Instead of writing directly to VGA memory, use the terminal functions:
+
+```c
+#include "terminal.h"
+
+void kernel_main(void)
+{
+    terminal_initialize();
+
+    terminal_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    terminal_write("Welcome to SeventhOS!\n");
+
+    terminal_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
+    terminal_write("[ OK ] Terminal initialized\n");
+
+    while (1)
+    {
+        __asm__ volatile("hlt");
+    }
+}
+```
+
+### Expected Result
+
+The kernel should display text using the terminal management system, support multiple colors, clear the screen, and handle basic cursor movement and scrolling.
+
+---
+
+# Milestone 3 — Interrupt Management and Keyboard Driver
+
+### Objective
+
+Implement interrupt management and a keyboard driver so users can interact with the operating system through keyboard input.
+
+### Concepts
+
+- Interrupt Descriptor Table (IDT)
+- Interrupt Service Routine (ISR)
+- Programmable Interrupt Controller (PIC)
+- IRQ
+- Keyboard scancodes
+- Ring buffer
+- Interrupt handling
+
+### Step 1: Create the IDT Header
+
+Create `interrupts/idt.h`.
+
+```c
+#ifndef SEVENTHOS_IDT_H
+#define SEVENTHOS_IDT_H
+
+void idt_initialize(void);
+
+#endif
+```
+
+### Step 2: Implement the IDT
+
+Create `interrupts/idt.c`.
+
+The IDT contains 256 entries. Each entry describes how the CPU should handle a specific interrupt.
+
+The implementation should include:
+
+1. An IDT entry structure.
+2. An IDT pointer structure.
+3. A function to configure an IDT entry.
+4. PIC remapping.
+5. IDT loading using the `lidt` instruction.
+
+For this milestone, keyboard IRQ1 is mapped to interrupt vector `0x21`.
+
+PIC remapping uses:
+
+- Master PIC offset: `0x20`
+- Slave PIC offset: `0x28`
+
+Unmask IRQ1 on the master PIC so keyboard interrupts can be received.
+
+### Step 3: Create the Interrupt Service Routine
+
+Create `interrupts/isr.asm`.
+
+The keyboard ISR should preserve CPU registers, call the keyboard handler, and return from the interrupt.
+
+```asm
+global keyboard_isr
+extern keyboard_irq_handler
+
+keyboard_isr:
+    pusha
+    cld
+
+    call keyboard_irq_handler
+
+    popa
+    iretd
+```
+
+The ISR is responsible for transferring control to the C keyboard handler.
+
+### Step 4: Create the Keyboard Header
+
+Create `drivers/keyboard.h`.
+
+```c
+#ifndef SEVENTHOS_KEYBOARD_H
+#define SEVENTHOS_KEYBOARD_H
+
+void keyboard_initialize(void);
+void keyboard_irq_handler(void);
+char keyboard_getchar(void);
+
+#endif
+```
+
+### Step 5: Implement the Keyboard Driver
+
+Create `drivers/keyboard.c`.
+
+The keyboard driver should:
+
+1. Read keyboard scancodes from I/O port `0x60`.
+2. Translate set-1 scancodes into ASCII characters.
+3. Handle Shift and Backspace.
+4. Store input in a ring buffer.
+5. Provide `keyboard_getchar()` to retrieve characters.
+6. Send an End of Interrupt (EOI) signal to the master PIC after handling IRQ1.
+
+Example for reading a scancode:
+
+```c
+static inline unsigned char inb(unsigned short port)
+{
+    unsigned char result;
+
+    __asm__ volatile(
+        "inb %1, %0"
+        : "=a"(result)
+        : "Nd"(port)
+    );
+
+    return result;
+}
+```
+
+The actual driver should also distinguish key press and key release events, and avoid inserting release scancodes into the input buffer.
+
+### Step 6: Enable Interrupts
+
+Update `kernel/kernel.c`.
+
+After initializing the IDT and keyboard driver, enable CPU interrupts:
+
+```c
+keyboard_initialize();
+idt_initialize();
+
+__asm__ volatile("sti");
+```
+
+The order and interrupt configuration must be consistent with the IDT and PIC implementation.
+
+### Expected Result
+
+The operating system should be able to receive keyboard input without rebooting or crashing. Characters should be available through `keyboard_getchar()`.
+
+---
+
+# Milestone 4 — Shell and Command Interpreter
+
+### Objective
+
+Develop a basic command-line shell that allows users to execute built-in commands.
+
+### Concepts
+
+- Input buffer
+- String manipulation
+- Command parsing
+- Command execution
+- Shell loop
+- Function-based command handling
+
+### Step 1: Create the Shell Header
+
+Create `shell/shell.h`.
+
+```c
+#ifndef SEVENTHOS_SHELL_H
+#define SEVENTHOS_SHELL_H
+
+void shell_initialize(void);
+void shell_update(void);
+
+#endif
+```
+
+### Step 2: Implement the Shell
+
+Create `shell/shell.c`.
+
+The shell receives keyboard input, stores it in a buffer, and executes the command when the user presses Enter.
+
+The shell should maintain:
+
+- An input buffer.
+- The current input length.
+- A prompt.
+- A command interpreter.
+- A command execution function.
+
+Example prompt:
+
+```c
+static void shell_prompt(void)
+{
+    terminal_set_color(COLOR_YELLOW, COLOR_BLACK);
+    terminal_write("seventh> ");
+
+    terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
+}
+```
+
+### Step 3: Implement Built-in Commands
+
+The initial shell should support:
 
 | Command | Description |
 |---|---|
-| `help` | Display available commands. |
-| `clear` | Clear the terminal screen. |
-| `about` | Display operating system information. |
-| `version` | Display the operating system version. |
-| `echo` | Print the provided message. |
+| `help` | Display available commands |
+| `clear` | Clear the terminal |
+| `about` | Display operating system information |
+| `version` | Display the current OS version |
+| `echo` | Print a message |
+
+Example command interpreter:
+
+```c
+static void shell_execute(const char *command)
+{
+    if (string_compare(command, "help"))
+    {
+        shell_help();
+    }
+    else if (string_compare(command, "clear"))
+    {
+        terminal_clear();
+    }
+    else if (string_compare(command, "about"))
+    {
+        terminal_write("SeventhOS is an educational 32-bit OS.\n");
+    }
+    else if (string_compare(command, "version"))
+    {
+        terminal_write("SeventhOS v0.4\n");
+    }
+    else
+    {
+        terminal_write("Command not found.\n");
+    }
+}
+```
+
+`string_compare()` and `shell_help()` must be implemented in `shell.c`. The `echo` command can be added by parsing the text that follows the command name.
+
+### Step 4: Handle User Input
+
+The shell should continuously retrieve characters from `keyboard_getchar()`.
+
+```c
+void shell_update(void)
+{
+    char character = keyboard_getchar();
+
+    if (character == 0)
+        return;
+
+    if (character == '\b')
+    {
+        if (input_length > 0)
+        {
+            terminal_putchar('\b');
+            input_length--;
+            input_buffer[input_length] = '\0';
+        }
+    }
+    else if (character == '\n' || character == '\r')
+    {
+        terminal_putchar('\n');
+
+        input_buffer[input_length] = '\0';
+
+        shell_execute(input_buffer);
+
+        input_length = 0;
+        input_buffer[0] = '\0';
+
+        shell_prompt();
+    }
+    else if (character >= 32 && character <= 126)
+    {
+        if (input_length < INPUT_BUFFER_SIZE - 1)
+        {
+            input_buffer[input_length++] = character;
+            input_buffer[input_length] = '\0';
+
+            terminal_putchar(character);
+        }
+    }
+}
+```
+
+This example assumes `input_buffer`, `input_length`, and `INPUT_BUFFER_SIZE` are declared in `shell.c`.
+
+### Step 5: Integrate the Shell into the Kernel
+
+Update `kernel/kernel.c`.
+
+```c
+#include "terminal.h"
+#include "idt.h"
+#include "keyboard.h"
+#include "shell.h"
+
+void kernel_main(void)
+{
+    terminal_initialize();
+
+    terminal_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    terminal_write("========================================\n");
+    terminal_write("              SeventhOS v0.4            \n");
+    terminal_write("========================================\n\n");
+
+    keyboard_initialize();
+    idt_initialize();
+
+    __asm__ volatile("sti");
+
+    shell_initialize();
+
+    while (1)
+    {
+        shell_update();
+    }
+}
+```
+
+### Expected Result
+
+The user should be able to interact with SeventhOS through a command-line interface.
 
 Example:
 
 ```text
 ========================================
-               SeventhOS v0.3
+              SeventhOS v0.4
 ========================================
-
-SeventhOS Shell v0.1
-Type 'help' to see available commands.
 
 seventh> help
 
@@ -178,87 +682,115 @@ Available commands:
 seventh> echo Hello World
 Hello World
 
-seventh> version
-SeventhOS v0.3
+seventh> about
+SeventhOS is an educational 32-bit OS.
 
 seventh>
 ```
 
-Expected result:
+---
 
-- Users can enter commands through the keyboard.
-- The shell can recognize and execute supported commands.
-- Unknown commands display an appropriate error message.
-- The input buffer is reset after each command.
+## 4. Build Configuration
 
-## 4. Build
+The Makefile must compile all source files and link them into the kernel.
 
-Run these commands from the project root:
+The following is the required build configuration structure. Add or update the object-file targets whenever new source files are introduced.
+
+```makefile
+BUILD_DIR := build
+ISO_DIR := $(BUILD_DIR)/iso
+KERNEL := $(BUILD_DIR)/kernel.elf
+ISO := $(BUILD_DIR)/seventhos.iso
+
+CC := gcc
+LD := ld
+NASM := nasm
+
+CFLAGS := -m32 -std=gnu11 -ffreestanding -O2 \
+          -Wall -Wextra -fno-stack-protector \
+          -fno-pie -fno-pic
+
+LDFLAGS := -m elf_i386 -T linker.ld
+
+INCLUDES := -Ikernel -Iinterrupts -Idrivers -Ishell
+```
+
+The build must include object files from:
+
+- `boot/boot.asm`
+- `interrupts/isr.asm`
+- `kernel/kernel.c`
+- `kernel/terminal.c`
+- `interrupts/idt.c`
+- `drivers/keyboard.c`
+- `shell/shell.c`
+
+The linker combines these object files into `kernel.elf`. GRUB then packages the kernel into a bootable ISO.
+
+## 5. Build and Run
+
+Run the following commands from the project root.
+
+### Clean Previous Build
 
 ```bash
 make clean
+```
+
+### Build the Operating System
+
+```bash
 make
 ```
 
-The ISO will be created at:
+The ISO will be generated at:
 
 ```text
 build/seventhos.iso
 ```
 
-## 5. Run in QEMU
-
-Start SeventhOS:
+### Run in QEMU
 
 ```bash
 make run
 ```
 
-Close QEMU using `Ctrl+C` in the terminal or close its window.
-
-## 6. Check the kernel
-
-Validate the Multiboot kernel:
+### Check the Kernel
 
 ```bash
 make check
-```
-
-Inspect the compiled kernel:
-
-```bash
 file build/kernel.elf
 ```
 
-## 7. Team ownership proposal
+## 6. Team Ownership Proposal
 
-- **Member 1:** `boot/`, `linker.ld`, `Makefile`, GRUB configuration, and ISO build.
-- **Member 2:** `kernel/`, terminal management, and kernel integration.
-- **Member 3:** `drivers/` and `shell/`, including keyboard input and command interpretation.
-- **Member 4:** `interrupts/`, including IDT, ISR, and PIC configuration. Future responsibility may include `memory/`.
+| Member | Responsibility |
+|---|---|
+| Member 1 | `boot/`, `linker.ld`, `Makefile`, GRUB and ISO build |
+| Member 2 | `kernel/` and terminal management |
+| Member 3 | `drivers/` and `shell/` |
+| Member 4 | `interrupts/` and future `memory/` development |
 
-Team members should agree on function interfaces before integrating components.
+Team members should agree on interfaces before integrating their work. Use feature branches and pull requests to avoid conflicting changes.
 
-## 8. Future development
+## 7. Future Development
 
-Potential development areas after Milestone 4:
+After completing the first four milestones, SeventhOS can be expanded with:
 
-- Memory management and allocation.
-- Basic filesystem implementation.
-- Process management and scheduling.
-- System call interface.
-- User-mode execution.
+- Physical memory management
+- Heap allocation
+- Filesystem support
+- Process management
+- System calls
+- Multitasking
+- Additional shell commands
 
-These components are planned for future development and are not part of the initial four milestones.
+These features are not part of the first four milestones.
 
-## Important
+## 8. Important Notes
 
-SeventhOS is an educational operating system project, not a complete or production-ready operating system.
+SeventhOS is an educational operating system project, not a production-ready operating system.
 
-The first four milestones establish the foundation for booting a kernel, managing terminal output, handling keyboard interrupts, and executing basic shell commands.
+Each milestone builds on the previous one. Make sure that the current milestone works before moving to the next stage.
 
-Some operating system features, including memory management, filesystem support, multitasking, and user-mode execution, have not yet been implemented.
-
-Do not let multiple team members edit the same files without agreeing on interfaces.
-
-Use feature branches and pull requests for integration.
+The code snippets in this guide illustrate the main implementation steps. Some components, particularly the IDT, PIC, keyboard translation, ring buffer, terminal scrolling, and complete Makefile rules, require full implementations in their respective source files before the project can build and run successfully.
