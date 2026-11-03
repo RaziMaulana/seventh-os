@@ -24,8 +24,14 @@ $(BUILD_DIR)/boot.o: boot/boot.asm | $(BUILD_DIR)
 $(BUILD_DIR)/kernel.o: kernel/kernel.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o
+$(BUILD_DIR)/keyboard.o: drivers/keyboard.c drivers/keyboard.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idrivers -c $< -o $@
+
+$(BUILD_DIR)/shell.o: shell/shell.c shell/shell.h drivers/keyboard.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Idrivers -Ishell -c $< -o $@
+
+$(KERNEL): $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o
 	grub-file --is-x86-multiboot $@
 
 $(ISO): $(KERNEL) iso/boot/grub/grub.cfg
