@@ -1,8 +1,8 @@
 // Membuat keyboard driver
 // Membaca input dari keyboard
 // Mengelola karakter yang diketik
-#ifndef RAZIOS_KEYBOARD_H
-#define RAZIOS_KEYBOARD_H
+#ifndef SEVENTHOS_KEYBOARD_H
+#define SEVENTHOS_KEYBOARD_H
 
 // Panggil sebelum interrupt diaktifkan.
 void keyboard_initialize(void);

@@ -4,11 +4,9 @@
 
 #include "keyboard.h"
 #include "shell.h"
+#include "terminal.h"
 
 #define INPUT_BUFFER_SIZE 128
-
-extern void terminal_write(const char *text);
-extern void terminal_clear(void);
 
 // Menyimpan perintah yang sedang diketik.
 static char input_buffer[INPUT_BUFFER_SIZE];
@@ -17,13 +15,14 @@ static size_t input_length;
 // Tampilkan penanda input shell.
 static void shell_prompt(void)
 {
-    terminal_write("razios> ");
+    terminal_set_color(COLOR_YELLOW, COLOR_BLACK);
+    terminal_write("seventhOS> ");
+    terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
 }
 
 static void shell_write_character(char character)
 {
-    char text[2] = { character, '\0' };
-    terminal_write(text);
+    terminal_putchar(character);
 }
 
 // Bandingkan dua teks tanpa pustaka standar.
@@ -61,11 +60,13 @@ static void shell_execute(const char *command)
         return;
 
     if (shell_string_equals(command, "help")) {
-        terminal_write("help\nclear\nabout\necho\n");
+        terminal_write("help\nclear\nabout\nversion\necho\n");
     } else if (shell_string_equals(command, "clear")) {
         terminal_clear();
     } else if (shell_string_equals(command, "about")) {
-        terminal_write("RaziOS - Mini OS edukasi x86 32-bit.\n");
+        terminal_write("SeventhOS is an educational 32-bit OS.\n");
+    } else if (shell_string_equals(command, "version")) {
+        terminal_write("SeventhOS v0.4\n");
     } else if (shell_string_equals(command, "echo")) {
         terminal_write("\n");
     } else if (shell_starts_with(command, "echo ")) {
@@ -79,8 +80,7 @@ static void shell_execute(const char *command)
 
 void shell_initialize(void)
 {
-    // Kosongkan input lalu tampilkan prompt.
-    keyboard_initialize();
+    // Kosongkan baris shell lalu tampilkan prompt awal.
     input_length = 0;
     input_buffer[0] = '\0';
     shell_prompt();
@@ -99,6 +99,8 @@ void shell_update(void)
         if (input_length > 0) {
             input_length--;
             input_buffer[input_length] = '\0';
+            // Anggota 2: hapus karakter di layar bersama karakter buffer.
+            terminal_putchar('\b');
         }
         return;
     }
