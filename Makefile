@@ -40,12 +40,18 @@ $(BUILD_DIR)/idt.o: interrupts/idt.c interrupts/idt.h kernel/terminal.h | $(BUIL
 $(BUILD_DIR)/isr.o: interrupts/isr.asm | $(BUILD_DIR)
 	$(NASM) -f elf32 $< -o $@
 
-$(BUILD_DIR)/kernel.o: kernel/kernel.c kernel/memory.h kernel/terminal.h interrupts/idt.h drivers/keyboard.h shell/shell.h | $(BUILD_DIR)
+$(BUILD_DIR)/kernel.o: kernel/kernel.c kernel/memory.h kernel/terminal.h kernel/multiboot.h kernel/pmm.h interrupts/idt.h drivers/keyboard.h shell/shell.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
-$(KERNEL): $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/terminal.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o $(BUILD_DIR)/memory.o $(BUILD_DIR)/idt.o $(BUILD_DIR)/isr.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/terminal.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o $(BUILD_DIR)/memory.o $(BUILD_DIR)/idt.o $(BUILD_DIR)/isr.o
+$(KERNEL): $(BUILD_DIR)/pmm.o $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/terminal.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o $(BUILD_DIR)/memory.o $(BUILD_DIR)/idt.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/multiboot.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(BUILD_DIR)/pmm.o $(BUILD_DIR)/boot.o $(BUILD_DIR)/kernel.o $(BUILD_DIR)/terminal.o $(BUILD_DIR)/keyboard.o $(BUILD_DIR)/shell.o $(BUILD_DIR)/memory.o $(BUILD_DIR)/idt.o $(BUILD_DIR)/isr.o $(BUILD_DIR)/multiboot.o
 	grub-file --is-x86-multiboot $@
+
+$(BUILD_DIR)/multiboot.o: kernel/multiboot.c kernel/multiboot.h kernel/terminal.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/pmm.o: kernel/pmm.c kernel/pmm.h kernel/multiboot.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(ISO): $(KERNEL) iso/boot/grub/grub.cfg
 	mkdir -p $(ISO_DIR)/boot/grub
