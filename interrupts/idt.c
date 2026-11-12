@@ -2,6 +2,10 @@
 
 #include "idt.h"
 #include "terminal.h"
+#include "paging.h"
+#include "gdt.h"
+#include "process.h"
+#include "stats.h"
 
 #define IDT_ENTRIES 256
 #define PIC_MASTER_COMMAND 0x20
@@ -10,7 +14,8 @@
 #define PIC_SLAVE_DATA 0xA1
 
 extern void *isr_stub_table[32];
-struct idt_entry {
+struct idt_entry
+{
     uint16_t offset_low;
     uint16_t selector;
     uint8_t zero;
@@ -18,7 +23,8 @@ struct idt_entry {
     uint16_t offset_high;
 } __attribute__((packed));
 
-struct idt_pointer {
+struct idt_pointer
+{
     uint16_t limit;
     uint32_t base;
 } __attribute__((packed));
@@ -26,23 +32,28 @@ struct idt_pointer {
 static struct idt_entry idt[IDT_ENTRIES];
 extern void keyboard_irq_stub(void);
 extern void keyboard_irq_handler(void);
+extern void timer_irq_stub(void);
+extern void syscall_stub(void);
 
 static inline void outb(uint16_t port, uint8_t value)
 {
-    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static void idt_set_gate_attr(uint8_t vector, uintptr_t handler, uint8_t attributes)
+{
+    idt[vector].offset_low = (uint16_t)(handler & 0xFFFFu);
+    idt[vector].selector = KERNEL_CODE_SEL;
+    idt[vector].zero = 0;
+    idt[vector].type_attributes = attributes;
+    idt[vector].offset_high = (uint16_t)((handler >> 16) & 0xFFFFu);
 }
 
 static void idt_set_gate(uint8_t vector, uintptr_t handler)
 {
-    idt[vector].offset_low = (uint16_t)(handler & 0xFFFFu);
-    // Selector code segment aktif GRUB pada kernel ini (CS=0x10).
-    idt[vector].selector = 0x10;
-    idt[vector].zero = 0;
-    idt[vector].type_attributes = 0x8E;
-    idt[vector].offset_high = (uint16_t)((handler >> 16) & 0xFFFFu);
+    idt_set_gate_attr(vector, handler, 0x8E);
 }
 
-// Anggota 4: remap PIC ke 0x20/0x28 dan hanya buka IRQ keyboard pada master.
 static void pic_initialize(void)
 {
     outb(PIC_MASTER_COMMAND, 0x11);
@@ -53,14 +64,15 @@ static void pic_initialize(void)
     outb(PIC_SLAVE_DATA, 0x02);
     outb(PIC_MASTER_DATA, 0x01);
     outb(PIC_SLAVE_DATA, 0x01);
-    outb(PIC_MASTER_DATA, 0xFD); // IRQ1 terbuka; IRQ0 dan IRQ2 dimask.
+    outb(PIC_MASTER_DATA, 0xFC);
     outb(PIC_SLAVE_DATA, 0xFF);
 }
 
 void idt_initialize(void)
 {
     struct idt_pointer pointer;
-    for (uint16_t i = 0; i < IDT_ENTRIES; i++) {
+    for (uint16_t i = 0; i < IDT_ENTRIES; i++)
+    {
         idt[i].offset_low = 0;
         idt[i].selector = 0;
         idt[i].zero = 0;
@@ -68,28 +80,59 @@ void idt_initialize(void)
         idt[i].offset_high = 0;
     }
 
-    // Anggota 4: pasang diagnostic handler untuk 32 exception CPU pertama.
     for (uint8_t i = 0; i < 32; i++)
         idt_set_gate(i, (uintptr_t)isr_stub_table[i]);
 
-    // Anggota 4: vektor 0x21 menghubungkan IRQ1 PIC dengan driver keyboard.
     idt_set_gate(0x21, (uintptr_t)keyboard_irq_stub);
+    idt_set_gate(0x20, (uintptr_t)timer_irq_stub);
+    idt_set_gate_attr(0x80, (uintptr_t)syscall_stub, 0xEE); // DPL=3: boleh dipanggil dari Ring 3
+
     pointer.limit = (uint16_t)(sizeof(idt) - 1u);
     pointer.base = (uint32_t)(uintptr_t)idt;
-    __asm__ volatile ("lidt %0" : : "m"(pointer));
+    __asm__ volatile("lidt %0" : : "m"(pointer));
     pic_initialize();
 }
 
-// Anggota 4: cetak nomor vektor/error code agar fault terlihat di layar QEMU.
-void exception_handler(uint32_t vector, uint32_t error_code)
+static const char *exception_name(uint32_t vector)
 {
+    switch (vector)
+    {
+    case 0:
+        return "divide error";
+    case 6:
+        return "invalid opcode";
+    case 13:
+        return "general protection fault";
+    case 14:
+        return "page fault";
+    default:
+        return "CPU exception";
+    }
+}
+
+void exception_handler(isr_frame_t *f)
+{
+    stats_exception(f->vector);
+
+    if (f->vector == 14)
+        paging_page_fault_handler(f); // tidak kembali
+
+    if ((f->cs & 3u) == 3u)                               
+        process_handle_fault(f, exception_name(f->vector), 0); 
+
     static const char hex_digits[] = "0123456789ABCDEF";
     char message[] = "KERNEL EXCEPTION vector=0x00 error=0x00000000\n";
     for (uint8_t i = 0; i < 2; i++)
-        message[26 + i] = hex_digits[(vector >> ((1u - i) * 4u)) & 0xFu];
+        message[26 + i] = hex_digits[(f->vector >> ((1u - i) * 4u)) & 0xFu];
     for (uint8_t i = 0; i < 8; i++)
-        message[37 + i] = hex_digits[(error_code >> ((7u - i) * 4u)) & 0xFu];
+        message[37 + i] = hex_digits[(f->error_code >> ((7u - i) * 4u)) & 0xFu];
+
     terminal_write(message);
+    terminal_write(exception_name(f->vector));
+    terminal_write(" at EIP=");
+    terminal_write_hex(f->eip);
+    terminal_write("\n");
+
     for (;;)
-        __asm__ volatile ("cli; hlt");
+        __asm__ volatile("cli; hlt");
 }

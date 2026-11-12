@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "pmm.h"
+#include "cpu.h"
 #include "multiboot.h"
 
 #define PMM_MAX_PAGES (1024u * 1024u)
@@ -19,24 +20,22 @@ static uint8_t allocated_bitmap[PMM_BITMAP_SIZE]
 
 static size_t total_pages;
 static size_t free_pages;
-static size_t used_pages;
+static size_t usable_pages;       // jumlah halaman RAM bertipe "Available"
+static uintptr_t highest_address; // alamat tertinggi RAM yang dikelola
 
 static void allocated_set(size_t page)
 {
-    allocated_bitmap[page / 8u] |=
-        (uint8_t)(1u << (page % 8u));
+    allocated_bitmap[page / 8u] |= (uint8_t)(1u << (page % 8u));
 }
 
 static void allocated_clear(size_t page)
 {
-    allocated_bitmap[page / 8u] &=
-        (uint8_t)~(1u << (page % 8u));
+    allocated_bitmap[page / 8u] &= (uint8_t)~(1u << (page % 8u));
 }
 
 static int allocated_test(size_t page)
 {
-    return (allocated_bitmap[page / 8u] &
-            (1u << (page % 8u))) != 0;
+    return (allocated_bitmap[page / 8u] & (1u << (page % 8u))) != 0;
 }
 
 static void bitmap_set(size_t page)
@@ -73,7 +72,6 @@ static void reserve_region(uint64_t start, uint64_t length)
         {
             bitmap_set(page);
             free_pages--;
-            used_pages++;
         }
     }
 }
@@ -95,8 +93,14 @@ static void release_region(uint64_t start, uint64_t length)
     uint64_t aligned_end =
         end & ~((uint64_t)PMM_PAGE_SIZE - 1u);
 
+    if (aligned_end > PMM_MANAGED_LIMIT) // batas RAM yang dikelola
+        aligned_end = PMM_MANAGED_LIMIT;
+
     if (aligned_start >= aligned_end)
         return;
+
+    if (aligned_end > highest_address) // catat ujung RAM tertinggi
+        highest_address = (uintptr_t)aligned_end;
 
     size_t first_page = (size_t)(aligned_start / PMM_PAGE_SIZE);
     size_t last_page = (size_t)(aligned_end / PMM_PAGE_SIZE);
@@ -107,7 +111,6 @@ static void release_region(uint64_t start, uint64_t length)
         {
             bitmap_clear(page);
             free_pages++;
-            used_pages--;
         }
     }
 }
@@ -122,7 +125,8 @@ void pmm_initialize(uint32_t multiboot_info_addr)
 
     total_pages = PMM_MAX_PAGES;
     free_pages = 0;
-    used_pages = PMM_MAX_PAGES;
+    usable_pages = 0; // semua nol DI SINI, sebelum loop memory map
+    highest_address = 0;
 
     multiboot_info_t *info =
         (multiboot_info_t *)multiboot_info_addr;
@@ -156,6 +160,8 @@ void pmm_initialize(uint32_t multiboot_info_addr)
         offset += entry_size + 4;
     }
 
+    usable_pages = free_pages; // snapshot SETELAH loop, SEBELUM reserve
+
     // Reserve low memory.
     reserve_region(0, 0x100000);
 
@@ -181,7 +187,6 @@ uintptr_t pmm_alloc_page(void)
             bitmap_set(page);
             allocated_set(page);
             free_pages--;
-            used_pages++;
 
             return (uintptr_t)(page * PMM_PAGE_SIZE);
         }
@@ -208,20 +213,15 @@ void pmm_free_page(uintptr_t address)
     bitmap_clear(page);
 
     free_pages++;
-    used_pages--;
 }
 
-size_t pmm_get_total_pages(void)
-{
-    return total_pages;
-}
+size_t pmm_get_total_pages(void) { return usable_pages; }
 
 size_t pmm_get_free_pages(void)
 {
     return free_pages;
 }
 
-size_t pmm_get_used_pages(void)
-{
-    return used_pages;
-}
+size_t pmm_get_used_pages(void) { return usable_pages - free_pages; }
+
+uintptr_t pmm_get_highest_address(void) { return highest_address; }

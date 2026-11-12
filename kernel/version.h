@@ -1,0 +1,6 @@
+#ifndef SEVENTHOS_VERSION_H
+#define SEVENTHOS_VERSION_H
+
+#define SEVENTHOS_VERSION "1.0.0"
+
+#endif

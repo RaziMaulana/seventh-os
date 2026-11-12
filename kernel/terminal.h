@@ -28,5 +28,10 @@ void terminal_clear(void);
 void terminal_set_color(uint8_t foreground, uint8_t background);
 void terminal_putchar(char character);
 void terminal_write(const char *text);
+void terminal_write_dec(uint32_t value);
+void terminal_write_hex(uint32_t value); 
+void terminal_put_at(uint32_t column, uint32_t row, char character, uint8_t foreground);
+void terminal_write_pad(const char *text, uint32_t width);
+void terminal_write_dec_pad(uint32_t value, uint32_t width);
 
 #endif

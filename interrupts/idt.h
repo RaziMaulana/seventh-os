@@ -3,10 +3,17 @@
 
 #include <stdint.h>
 
-// Anggota 4: siapkan IDT minimal dan aktifkan IRQ1 keyboard.
-void idt_initialize(void);
+// Tata letak stack yang dibentuk isr.asm (alamat rendah -> tinggi).
+typedef struct
+{
+    uint32_t es, ds;                                       // ENTER_KERNEL
+    uint32_t edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax; // pusha
+    uint32_t vector, error_code;                           // dari stub
+    uint32_t eip, cs, eflags;                              // dari CPU
+    uint32_t user_esp, user_ss;                            // hanya ada bila cs & 3 == 3
+} isr_frame_t;
 
-// Dipanggil stub exception; tampilkan vektor lalu hentikan CPU dengan aman.
-void exception_handler(uint32_t vector, uint32_t error_code);
+void idt_initialize(void);
+void exception_handler(isr_frame_t *frame);
 
 #endif

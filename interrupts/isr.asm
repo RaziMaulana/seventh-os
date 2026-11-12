@@ -2,7 +2,10 @@ BITS 32
 
 section .text
 extern exception_handler
+extern timer_irq_handler
+extern syscall_handler
 extern keyboard_irq_handler
+extern timer_irq_handler
 
 ; Anggota 4: stub exception CPU menormalkan stack agar handler menerima vector/error.
 %macro ISR_NO_ERROR 1
@@ -16,6 +19,22 @@ isr_stub_%1:
 isr_stub_%1:
     push dword %1
     jmp exception_common
+%endmacro
+
+%macro ENTER_KERNEL 0
+    pusha
+    push ds
+    push es
+    mov ax, 0x10            ; KERNEL_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    cld
+%endmacro
+
+%macro LEAVE_KERNEL 0
+    pop es
+    pop ds
+    popa
 %endmacro
 
 ISR_NO_ERROR 0
@@ -52,32 +71,53 @@ ISR_NO_ERROR 30
 ISR_NO_ERROR 31
 
 exception_common:
-    pusha
-    cld
+    ENTER_KERNEL
     mov ebx, esp
     and esp, 0xFFFFFFF0
-    sub esp, 8              ; padding agar stack C sejajar 16 byte setelah argumen
-    push dword [ebx + 36]   ; error code
-    push dword [ebx + 32]   ; vector number
+    sub esp, 12
+    push ebx                ; argumen: isr_frame_t *
     call exception_handler
-    add esp, 16
     mov esp, ebx
-    popa
-    add esp, 8
+    LEAVE_KERNEL
+    add esp, 8              ; buang vector + error code
     iretd
 
-; Anggota 4: IRQ keyboard mengikuti jalur PIC, mengirim EOI di driver, lalu iretd.
 global keyboard_irq_stub
 keyboard_irq_stub:
-    pusha
-    cld
+    ENTER_KERNEL
     mov ebx, esp
     and esp, 0xFFFFFFF0
     call keyboard_irq_handler
     mov esp, ebx
-    popa
+    LEAVE_KERNEL
     iretd
 
+global timer_irq_stub
+timer_irq_stub:
+    ENTER_KERNEL
+    mov ebx, esp
+    and esp, 0xFFFFFFF0
+    call timer_irq_handler
+    mov esp, ebx
+    LEAVE_KERNEL
+    iretd
+
+; int 0x80: frame disamakan dengan exception (error=0, vector=0x80)
+global syscall_stub
+syscall_stub:
+    push dword 0
+    push dword 0x80
+    ENTER_KERNEL
+    mov ebx, esp
+    and esp, 0xFFFFFFF0
+    sub esp, 12
+    push ebx
+    call syscall_handler
+    mov esp, ebx
+    LEAVE_KERNEL
+    add esp, 8
+    iretd
+    
 section .rodata
 align 4
 global isr_stub_table

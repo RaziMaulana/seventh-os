@@ -1,22 +1,130 @@
-// Membuat command interpreter
-// Mengembangkan perintah seperti help, clear, about, dan echo
 #include <stddef.h>
-
+#include <stdint.h>
+#include "cmd_memory.h"
+#include "cmd_sync.h"
+#include "cmd_thread.h"
+#include "cmd_user.h"
 #include "keyboard.h"
+#include "kstring.h"
 #include "shell.h"
+#include "shell_util.h"
 #include "terminal.h"
+#include "cmd_fs.h"
+#include "cmd_inspect.h"
+#include "cmd_exp.h"
+#include "version.h"
+#include "cmd_demo.h"
 
 #define INPUT_BUFFER_SIZE 128
 
-// Menyimpan perintah yang sedang diketik.
 static char input_buffer[INPUT_BUFFER_SIZE];
 static size_t input_length;
 
-// Tampilkan penanda input shell.
+typedef struct
+{
+    const char *name;
+    void (*run0)(void);             // perintah tanpa argumen
+    void (*run1)(const char *args); // perintah dengan argumen (args bisa "")
+} shell_cmd_t;
+
+static void sh_help(void);
+static void sh_clear(void) { terminal_clear(); }
+static void sh_about(void) { terminal_write("SeventhOS is an educational 32-bit OS.\n"); }
+static void sh_version(void) { terminal_write("SeventhOS v" SEVENTHOS_VERSION "\n"); }
+static void sh_echo(const char *args)
+{
+    terminal_write(args);
+    terminal_write("\n");
+}
+
+static const shell_cmd_t commands[] = {
+    {"help", sh_help, NULL},
+    {"clear", sh_clear, NULL},
+    {"about", sh_about, NULL},
+    {"version", sh_version, NULL},
+    {"echo", NULL, sh_echo},
+    /* Fase 2 */
+    {"meminfo", cmd_meminfo, NULL},
+    {"memmap", cmd_memmap, NULL},
+    {"heapinfo", cmd_heapinfo, NULL},
+    {"kmtest", cmd_kmtest, NULL},
+    {"oomtest", cmd_oomtest, NULL},
+    {"pmmtest", cmd_pmmtest, NULL},
+    {"pagetest", cmd_pagetest, NULL},
+    {"pagefault", cmd_pagefault, NULL},
+    /* Fase 3 */
+    {"timer", cmd_timer, NULL},
+    {"delay", NULL, cmd_delay},
+    {"ps", cmd_ps, NULL},
+    {"threadlog", cmd_threadlog, NULL},
+    {"spawn", NULL, cmd_spawn},
+    {"kill", NULL, cmd_kill},
+    {"prio", NULL, cmd_prio},
+    {"sched", NULL, cmd_sched},
+    {"reap", cmd_reap, NULL},
+    /* Fase 4 */
+    {"racetest", NULL, cmd_racetest},
+    {"deadlock", NULL, cmd_deadlock},
+    {"locks", cmd_locks, NULL},
+    {"gdtinfo", cmd_gdtinfo, NULL},
+    {"exec", NULL, cmd_exec},
+    {"procs", cmd_procs, NULL},
+    /* Fase 5: filesystem */
+    {"pwd", cmd_pwd, NULL},
+    {"cd", NULL, cmd_cd},
+    {"ls", NULL, cmd_ls},
+    {"mkdir", NULL, cmd_mkdir},
+    {"touch", NULL, cmd_touch},
+    {"cat", NULL, cmd_cat},
+    {"write", NULL, cmd_write},
+    {"append", NULL, cmd_append},
+    {"rm", NULL, cmd_rm},
+    {"rmdir", NULL, cmd_rmdir},
+    {"stat", NULL, cmd_stat},
+    {"df", cmd_df, NULL},
+    {"fstest", cmd_fstest, NULL},
+    {"fsfill", cmd_fsfill, NULL},
+    {"sysinfo", cmd_sysinfo, NULL},
+    {"top", cmd_top, NULL},
+    {"irqinfo", cmd_irqinfo, NULL},
+    {"diag", cmd_diag, NULL},
+    {"schedsim", NULL, cmd_schedsim},
+    {"schedlive", NULL, cmd_schedlive},
+    {"fitexp", NULL, cmd_fitexp},
+    {"demo", NULL, cmd_demo},
+    {"selftest", NULL, cmd_selftest},
+};
+
+#define COMMAND_COUNT (sizeof(commands) / sizeof(commands[0]))
+
+static void sh_help(void)
+{
+    uint32_t column = 0;
+    terminal_write("Commands:\n");
+    for (uint32_t i = 0; i < COMMAND_COUNT; i++)
+    {
+        uint32_t len = (uint32_t)strlen(commands[i].name);
+        if (column + len + 1u > 78u)
+        {
+            terminal_write("\n");
+            column = 0;
+        }
+        terminal_write(commands[i].name);
+        terminal_putchar(' ');
+        column += len + 1u;
+    }
+    terminal_write("\n");
+}
+
 static void shell_prompt(void)
 {
     terminal_set_color(COLOR_YELLOW, COLOR_BLACK);
-    terminal_write("seventhOS> ");
+    terminal_write("seventhOS");
+    terminal_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
+    terminal_write(":");
+    terminal_write(cmd_fs_cwd());
+    terminal_set_color(COLOR_YELLOW, COLOR_BLACK);
+    terminal_write("> ");
     terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
 }
 
@@ -25,62 +133,38 @@ static void shell_write_character(char character)
     terminal_putchar(character);
 }
 
-// Bandingkan dua teks tanpa pustaka standar.
-static int shell_string_equals(const char *left, const char *right)
-{
-    size_t index = 0;
-
-    while (left[index] != '\0' && right[index] != '\0') {
-        if (left[index] != right[index])
-            return 0;
-        index++;
-    }
-
-    return left[index] == right[index];
-}
-
-static int shell_starts_with(const char *text, const char *prefix)
-{
-    size_t index = 0;
-
-    while (prefix[index] != '\0') {
-        if (text[index] != prefix[index])
-            return 0;
-        index++;
-    }
-
-    return 1;
-}
-
-// Jalankan perintah yang dikenali shell.
 static void shell_execute(const char *command)
 {
-    // OS dapat menjalankan perintah sederhana
     if (command[0] == '\0')
         return;
 
-    if (shell_string_equals(command, "help")) {
-        terminal_write("help\nclear\nabout\nversion\necho\n");
-    } else if (shell_string_equals(command, "clear")) {
-        terminal_clear();
-    } else if (shell_string_equals(command, "about")) {
-        terminal_write("SeventhOS is an educational 32-bit OS.\n");
-    } else if (shell_string_equals(command, "version")) {
-        terminal_write("SeventhOS v0.4\n");
-    } else if (shell_string_equals(command, "echo")) {
-        terminal_write("\n");
-    } else if (shell_starts_with(command, "echo ")) {
-        // Tampilkan teks setelah perintah echo.
-        terminal_write(command + 5);
-        terminal_write("\n");
-    } else {
-        terminal_write("Perintah tidak dikenal. Ketik 'help'.\n");
+    for (uint32_t i = 0; i < COMMAND_COUNT; i++)
+    {
+        const shell_cmd_t *c = &commands[i];
+        if (!word_is(command, c->name))
+            continue;
+        const char *args = command;
+        while (*args != '\0' && *args != ' ')
+            args++;
+        while (*args == ' ')
+            args++;
+        if (c->run0 != NULL)
+            c->run0();
+        else
+            c->run1(args);
+        return;
     }
+
+    terminal_write("Perintah tidak dikenal. Ketik 'help'.\n");
+}
+
+void shell_run_command(const char *command)
+{
+    shell_execute(command);
 }
 
 void shell_initialize(void)
 {
-    // Kosongkan baris shell lalu tampilkan prompt awal.
     input_length = 0;
     input_buffer[0] = '\0';
     shell_prompt();
@@ -88,25 +172,27 @@ void shell_initialize(void)
 
 void shell_update(void)
 {
-    // Ambil satu karakter dari buffer keyboard.
     char character = keyboard_getchar();
 
     if (character == 0)
         return;
 
-    if (character == '\b') {
-        // Hapus karakter terakhir dari buffer.
-        if (input_length > 0) {
+    if (character == '\b')
+    {
+        if (input_length > 0)
+        {
             input_length--;
             input_buffer[input_length] = '\0';
-            // Anggota 2: hapus karakter di layar bersama karakter buffer.
+
+            terminal_putchar('\b');
+            terminal_putchar(' ');
             terminal_putchar('\b');
         }
         return;
     }
 
-    if (character == '\n' || character == '\r') {
-        // Jalankan perintah, lalu siapkan baris baru.
+    if (character == '\n' || character == '\r')
+    {
         terminal_write("\n");
         shell_execute(input_buffer);
 
@@ -117,8 +203,8 @@ void shell_update(void)
     }
 
     if (character >= 32 && character <= 126 &&
-        input_length < INPUT_BUFFER_SIZE - 1) {
-        // Simpan dan tampilkan karakter yang diketik.
+        input_length < INPUT_BUFFER_SIZE - 1)
+    {
         input_buffer[input_length++] = character;
         input_buffer[input_length] = '\0';
         shell_write_character(character);

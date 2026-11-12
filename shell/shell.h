@@ -5,5 +5,6 @@
 
 void shell_initialize(void);
 void shell_update(void);
+void shell_run_command(const char *command);
 
 #endif

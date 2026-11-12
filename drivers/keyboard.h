@@ -13,4 +13,6 @@ void keyboard_irq_handler(void);
 // Ambil karakter berikutnya; 0 jika buffer kosong.
 char keyboard_getchar(void);
 
+int keyboard_has_input(void);
+
 #endif

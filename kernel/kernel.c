@@ -3,11 +3,20 @@
 
 #include "idt.h"
 #include "keyboard.h"
-#include "memory.h"
+#include "heap.h"
 #include "shell.h"
 #include "terminal.h"
 #include "multiboot.h"
 #include "pmm.h"
+#include "paging.h"
+#include "timer.h"
+#include "demo_threads.h"
+#include "scheduler.h"
+#include "thread.h"
+#include "gdt.h"
+#include "vfs.h"
+#include "serial.h"
+#include "selftest.h"
 
 static const char *letter_pattern(char letter, size_t row)
 {
@@ -62,89 +71,81 @@ static void terminal_write_banner(void)
     }
 }
 
-void kernel_main(uint32_t multiboot_magic,
-                 uint32_t multiboot_info_addr)
+static void boot_status(const char *name, int ok)
 {
-    terminal_initialize();
+    terminal_set_color(ok ? COLOR_LIGHT_GREEN : COLOR_LIGHT_RED, COLOR_BLACK);
+    terminal_write(name);
+    terminal_write(ok ? ": OK\n" : ": FAILED\n");
+    terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
+}
 
-    if (multiboot_magic != 0x2BADB002 ||
-        multiboot_info_addr == 0)
-    {
-        terminal_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
-        terminal_write("Multiboot: invalid boot information\n");
+static void kernel_panic(const char *message)
+{
+    terminal_set_color(COLOR_LIGHT_RED, COLOR_BLACK);
+    terminal_write("KERNEL PANIC: ");
+    terminal_write(message);
+    terminal_write("\n");
+    for (;;)
+        __asm__ volatile("cli; hlt");
+}
 
-        for (;;)
-            __asm__ volatile("cli; hlt");
-    }
-
-    terminal_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    terminal_write("Multiboot: boot information received\n");
-
-    terminal_set_color(COLOR_LIGHT_BLUE, COLOR_BLACK);
+void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr)
+{
     terminal_write_banner();
+    terminal_initialize();
+    serial_initialize(); // cermin keluaran ke COM1
 
-    terminal_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-    terminal_write("Kernel status: RUNNING\n");
+    gdt_initialize(); // GDT Ring 0/3 + TSS: sebelum IDT
+    boot_status("GDT + TSS (Ring 0/3)", 1);
 
-    terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
-    terminal_write("Architecture: x86 32-bit\n");
-    terminal_write("Bootloader: GRUB Multiboot\n");
-    terminal_write("Milestone 1: Kernel successfully loaded!\n");
+    if (!multiboot_validate(multiboot_magic, multiboot_info_addr))
+        kernel_panic("invalid Multiboot boot information");
+    boot_status("Multiboot", 1);
 
-    // Milestone 5: Parse Multiboot Memory Information.
-    multiboot_parse(multiboot_magic, multiboot_info_addr);
+    /* banner: biarkan kode banner Anda yang sudah ada di sini */
 
-    pmm_initialize(multiboot_info_addr);
+    pmm_initialize(multiboot_info_addr); // memori fisik
+    boot_status("Physical Memory Manager", pmm_get_free_pages() > 0);
 
-    uintptr_t test_page = pmm_alloc_page();
+    idt_initialize(); // sebelum paging: page fault terlihat
+    boot_status("IDT", 1);
 
-    if (test_page != 0)
-    {
-        terminal_write("Page Allocation: SUCCESS\n");
+    if (paging_initialize() != 0)
+        kernel_panic("paging initialization failed");
+    boot_status("Paging", paging_is_enabled());
 
-        pmm_free_page(test_page);
+    if (heap_initialize() != 0) // butuh PMM + paging
+        kernel_panic("kernel heap initialization failed");
+    boot_status("Kernel heap", 1);
 
-        terminal_write("Page Deallocation: SUCCESS\n");
-    }
-    else
-    {
-        terminal_write("Page Allocation: FAILED\n");
-    }
+    timer_initialize(TIMER_DEFAULT_HZ);
+    boot_status("PIT timer (100 Hz)", 1);
 
-    terminal_set_color(COLOR_LIGHT_CYAN, COLOR_BLACK);
-    terminal_write("\n=== PHYSICAL MEMORY MANAGER ===\n");
+    threads_initialize(); // adopsi shell (id 0) + idle (id 1)
+    boot_status("Thread subsystem", thread_count() >= 2);
 
-    terminal_set_color(COLOR_LIGHT_GREY, COLOR_BLACK);
+    boot_status("RAMDisk + SeventhFS (VFS)", vfs_init() == VFS_OK); // butuh heap + mutex
 
-    terminal_write("Total Pages: ");
-    terminal_write("Initialized\n");
+    scheduler_start();
+    boot_status("Preemptive scheduler (Round Robin)", 1);
 
-    terminal_write("PMM Initialization: SUCCESS\n");
-
-    // Initialize basic kernel heap.
-    memory_initialize();
-
-    terminal_write("Memory manager: ready (256 KiB kernel heap)\n");
-
-    if (memory_allocate(16) != 0)
-        terminal_write("Memory test: 16-byte allocation successful\n");
-    else
-        terminal_write("Memory test: allocation failed\n");
-
-    // Initialize keyboard and interrupt handling.
     keyboard_initialize();
-    idt_initialize();
-
     __asm__ volatile("sti");
 
-    terminal_write("Interrupts: IDT and keyboard IRQ enabled\n\n");
+    if (multiboot_cmdline_has("selftest"))
+    { // mode pengujian otomatis (make test)
+        terminal_write("Boot mode: selftest\n");
+        uint32_t failed = selftest_run(1);
+        selftest_exit(failed == 0);
+        terminal_write("(no QEMU debug-exit device: continuing to the shell)\n");
+    }
 
-    // Initialize shell.
+    terminal_write("Type 'help' for commands.\n\n");
     shell_initialize();
-
     for (;;)
     {
         shell_update();
-        __asm__ volatile("hlt");
+        if (!keyboard_has_input())
+            thread_sleep_ms(10);
     }
 }

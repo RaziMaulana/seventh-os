@@ -1,4 +1,3 @@
-
 #ifndef SEVENTHOS_PMM_H
 #define SEVENTHOS_PMM_H
 
@@ -6,6 +5,9 @@
 #include <stddef.h>
 
 #define PMM_PAGE_SIZE 4096u
+#define PMM_MANAGED_LIMIT 0x20000000u // RAM di atas 512 MiB tidak dikelola
+
+uintptr_t pmm_get_highest_address(void);
 
 void pmm_initialize(uint32_t multiboot_info_addr);
 

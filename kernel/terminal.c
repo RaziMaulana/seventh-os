@@ -1,5 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
+#include "cpu.h"
+#include "serial.h"
 
 #include "terminal.h"
 
@@ -60,7 +62,7 @@ static void terminal_newline(void)
 }
 
 // Anggota 2: tampilkan satu karakter; tangani newline dan backspace.
-void terminal_putchar(char character)
+static void terminal_putchar_locked(char character)
 {
     if (character == '\n') {
         terminal_newline();
@@ -82,6 +84,14 @@ void terminal_putchar(char character)
     VGA_MEMORY[cursor_row * VGA_WIDTH + cursor_column] =
         make_vga_entry((unsigned char)character, terminal_color);
     cursor_column++;
+}
+
+void terminal_putchar(char character)
+{
+    uint32_t flags = irq_save();       
+    serial_write_char(character);         
+    terminal_putchar_locked(character);
+    irq_restore(flags);
 }
 
 // Anggota 2: fungsi output string dibangun dari operasi karakter terminal.
@@ -118,4 +128,60 @@ void terminal_write(const char *text)
 
         terminal_putchar((char)first);
     }
+}
+
+void terminal_write_dec(uint32_t value)
+{
+    char buffer[11];
+    size_t i = 0;
+
+    if (value == 0) {
+        terminal_putchar('0');
+        return;
+    }
+    while (value > 0) {
+        buffer[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+    while (i > 0)
+        terminal_putchar(buffer[--i]);
+}
+
+void terminal_write_hex(uint32_t value)
+{
+    static const char digits[] = "0123456789ABCDEF";
+
+    terminal_write("0x");
+    for (int shift = 28; shift >= 0; shift -= 4)
+        terminal_putchar(digits[(value >> shift) & 0xFu]);
+}
+
+void terminal_put_at(uint32_t column, uint32_t row, char character, uint8_t foreground)
+{
+    if (column >= VGA_WIDTH || row >= VGA_HEIGHT)
+        return;
+    VGA_MEMORY[row * VGA_WIDTH + column] =
+        make_vga_entry((unsigned char)character,
+                       (uint8_t)((foreground & 0x0Fu) | (COLOR_BLACK << 4)));
+}
+
+void terminal_write_pad(const char *text, uint32_t width)
+{
+    uint32_t n = 0;
+
+    while (text[n] != '\0')
+        terminal_putchar(text[n++]);
+    for (; n < width; n++)
+        terminal_putchar(' ');
+}
+
+void terminal_write_dec_pad(uint32_t value, uint32_t width)
+{
+    uint32_t digits = 1;
+
+    for (uint32_t t = value; t >= 10u; t /= 10u)
+        digits++;
+    terminal_write_dec(value);
+    for (; digits < width; digits++)
+        terminal_putchar(' ');
 }

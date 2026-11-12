@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "keyboard.h"
+#include "stats.h"
 
 #define KEYBOARD_DATA_PORT 0x60
 #define PIC_MASTER_COMMAND_PORT 0x20
@@ -129,6 +130,7 @@ void keyboard_initialize(void)
 
 void keyboard_irq_handler(void)
 {
+    stats_irq(1);
     uint8_t scancode = inb(KEYBOARD_DATA_PORT);
 
     if (scancode == 0xE0) {
@@ -155,4 +157,9 @@ char keyboard_getchar(void)
     character = input_buffer[input_tail];
     input_tail = (uint16_t)((input_tail + 1u) % KEYBOARD_BUFFER_SIZE);
     return character;
+}
+
+int keyboard_has_input(void)
+{
+    return input_head != input_tail;
 }
